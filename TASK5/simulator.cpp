@@ -84,6 +84,8 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
     std::array<std::deque<int>, kFloors + 1> wait_up, wait_down;
     std::array<std::vector<int>, kElevators> inside;
     std::array<int, kElevators> busy_until {};
+    std::array<int, kElevators> doors_ready {}; // 下客完毕、可以开始上客的时刻
+    std::vector<int> pending_leave;
     View v {};
     v.hall_up.fill(-1);
     v.hall_down.fill(-1);
@@ -94,9 +96,29 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
     int next = 0, delivered = 0, gave_up = 0;
 
     for (v.now = kDayStart; delivered + gave_up < n; ++v.now) {
-        if (v.now > kTimeLimit) {
-            std::printf("FAIL: 23:00 时仍有乘客被困在轿厢内\n");
-            return;
+        {
+            auto it = std::remove_if(pending_leave.begin(), pending_leave.end(), [&](int id) {
+                if (ps[id].leave > v.now)
+                    return false;
+                ++delivered;
+                return true;
+            });
+            pending_leave.erase(it, pending_leave.end());
+        }
+        if (delivered + gave_up >= n)
+            break;
+        if (v.now >= kTimeLimit) {
+            bool stranded = false;
+            for (int e = 0; e < kElevators; ++e)
+                if (!inside[e].empty())
+                    stranded = true;
+            for (const Passenger& p: ps)
+                if (p.leave > kTimeLimit)
+                    stranded = true;
+            if (stranded || v.now > kTimeLimit) {
+                std::printf("FAIL: 23:00 前未能全部送达\n");
+                return;
+            }
         }
         for (; next < n && ps[next].arrive <= v.now; ++next) { // 新到达的乘客按下召唤按钮
             const Passenger& p = ps[next];
@@ -106,17 +128,54 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
             if (button == -1)
                 button = v.now;
         }
-        for (int f = 1; f <= kFloors; ++f) { // 等太久的乘客改走楼梯，已按下的按钮不会熄灭
-            for (auto* q: { &wait_up[f], &wait_down[f] }) {
-                auto it = std::remove_if(q->begin(), q->end(), [&](int id) {
-                    return v.now - ps[id].arrive > ps[id].patience;
-                });
-                gave_up += static_cast<int>(q->end() - it);
-                q->erase(it, q->end());
-            }
-        }
         for (int e = 0; e < kElevators; ++e)
             v.cars[e].busy = busy_until[e] > v.now;
+        for (int e = 0; e < kElevators; ++e) { // 乘客上梯后，记录轿厢内按钮被按下的时刻
+            Car& c = v.cars[e];
+            for (int id: inside[e]) {
+                if (ps[id].board <= v.now && c.car_call[ps[id].to] == -1)
+                    c.car_call[ps[id].to] = ps[id].board; // 乘客上梯时按下的轿厢按钮
+            }
+        }
+        for (int e = 0; e < kElevators; ++e) { // 开门期间新到的同方向乘客可以继续上梯
+            Car& c = v.cars[e];
+            if (c.doing != Action::OpenUp && c.doing != Action::OpenDown)
+                continue;
+            if (busy_until[e] < v.now) // 门已经关了一段时间
+                continue;
+            if (v.now < doors_ready[e]) // 还有下梯的乘客没走完
+                continue;
+            const bool dir_up = c.doing == Action::OpenUp;
+            auto& q = dir_up ? wait_up[c.floor] : wait_down[c.floor];
+            int& hall = dir_up ? v.hall_up[c.floor] : v.hall_down[c.floor];
+            bool boarded = false;
+            while (!q.empty() && static_cast<int>(inside[e].size()) < c.capacity) {
+                const int id = q.front();
+                q.pop_front();
+                ps[id].board = v.now;
+                inside[e].push_back(id);
+                busy_until[e] += kTransferTime;
+                boarded = true;
+            }
+            if (boarded) {
+                c.load = static_cast<int>(inside[e].size());
+                c.busy = true;
+                if (q.empty())
+                    hall = -1; // 上完最后一位，召唤按钮熄灭
+            }
+        }
+        for (int e = 0; e < kElevators; ++e) { // 开门动作结束：门关后仍未上梯的乘客重新按下召唤按钮
+            Car& c = v.cars[e];
+            if (busy_until[e] != v.now)
+                continue;
+            if (c.doing != Action::OpenUp && c.doing != Action::OpenDown)
+                continue;
+            const bool dir_up = c.doing == Action::OpenUp;
+            auto& q = dir_up ? wait_up[c.floor] : wait_down[c.floor];
+            int& button = dir_up ? v.hall_up[c.floor] : v.hall_down[c.floor];
+            if (!q.empty() && button == -1)
+                button = v.now;
+        }
         for (int e = 0; e < kElevators; ++e) { // 空闲的电梯依次决策
             if (busy_until[e] > v.now)
                 continue;
@@ -139,11 +198,12 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
                         return false;
                     ++out;
                     ps[id].leave = v.now + kDoorTime + kTransferTime * out; // 开门后第 out 位下梯
+                    pending_leave.push_back(id);
                     return true;
                 });
                 inside[e].erase(it, inside[e].end());
-                delivered += out;
                 c.car_call[f] = -1;
+                doors_ready[e] = v.now + (out > 0 ? kDoorTime + kTransferTime * out : 0);
                 auto& q = a == Action::OpenUp ? wait_up[f] : wait_down[f];
                 int& button = a == Action::OpenUp ? v.hall_up[f] : v.hall_down[f];
                 button = -1;
@@ -155,16 +215,28 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
                     ps[id].board =
                         v.now + kDoorTime + kTransferTime * (out + in); // 下客完后第 in 位上梯
                     inside[e].push_back(id);
-                    if (c.car_call[ps[id].to] == -1)
-                        c.car_call[ps[id].to] = v.now;
                 }
-                if (!q.empty())
-                    button = v.now; // 满载没上去的乘客重新按下按钮
                 busy_until[e] = v.now + kDoorTime + kTransferTime * (out + in);
             } else {
                 busy_until[e] = v.now + 1;
             }
             c.load = static_cast<int>(inside[e].size());
+        }
+        for (int f = 1; f <= kFloors; ++f) { // 等太久的乘客改走楼梯，已按下的按钮不会熄灭
+            for (auto* q: { &wait_up[f], &wait_down[f] }) {
+                auto it = std::remove_if(q->begin(), q->end(), [&](int id) {
+                    return v.now - ps[id].arrive > ps[id].patience;
+                });
+                gave_up += static_cast<int>(q->end() - it);
+                q->erase(it, q->end());
+            }
+        }
+    }
+
+    for (const Passenger& p: ps) {
+        if (p.leave > kTimeLimit) {
+            std::printf("FAIL: 23:00 前未能全部送达\n");
+            return;
         }
     }
 

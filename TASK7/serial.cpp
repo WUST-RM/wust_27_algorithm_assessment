@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <thread>

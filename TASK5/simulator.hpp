@@ -13,7 +13,7 @@ constexpr int kDoorTime = 5; // 一次停靠中开门、关门共耗时 5 s
 constexpr int kTransferTime = 1; // 每位乘客进出轿厢耗时 1 s
 constexpr int kDayStart = 7 * 3600 + 30 * 60; // 07:30 开始有乘客
 constexpr int kDayEnd = 22 * 3600; // 22:00 之后不再有新乘客
-constexpr int kTimeLimit = 23 * 3600; // 23:00 时轿厢内仍有乘客，判定失败
+constexpr int kTimeLimit = 23 * 3600; // 23:00 前未全部送达（含下梯晚于 23:00），判定失败
 
 // 作息时间表：上课时刻、下课时刻、该时段上课人数的相对比例。作息表是公开信息，调度器可以使用
 struct ClassPeriod {
@@ -38,7 +38,7 @@ enum class Action {
 
 // 一部电梯的状态
 struct Car {
-    int floor; // 当前动作完成后所在的楼层
+    int floor; // 空闲时为当前楼层；busy 为 true 时为本次动作完成后的楼层（移动中即目标楼层）
     int load; // 轿厢内人数
     int capacity; // 额定载客人数
     bool busy; // 是否正在执行动作
