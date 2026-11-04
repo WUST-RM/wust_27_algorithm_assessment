@@ -8,7 +8,7 @@
 
 namespace {
 
-constexpr int kStateFrames = 5000;    // 下位机以 500 Hz 发送 10 s
+constexpr int kStateFrames = 5000; // 下位机以 500 Hz 发送 10 s
 constexpr std::uint8_t kSof = 0xA5;
 
 // 固定种子的伪随机数（splitmix64），保证所有人收到的字节流相同
@@ -21,10 +21,16 @@ std::uint64_t splitmix64(std::uint64_t& s) {
 
 class Rng {
 public:
-    explicit Rng(std::uint64_t seed) : s_(seed) {}
-    std::uint64_t next() { return splitmix64(s_); }
-    int uniform(int lo, int hi) { return lo + static_cast<int>(next() % (hi - lo + 1)); }
-    double real() { return static_cast<double>(next() >> 11) / 9007199254740992.0; }   // [0, 1)
+    explicit Rng(std::uint64_t seed): s_(seed) {}
+    std::uint64_t next() {
+        return splitmix64(s_);
+    }
+    int uniform(int lo, int hi) {
+        return lo + static_cast<int>(next() % (hi - lo + 1));
+    }
+    double real() {
+        return static_cast<double>(next() >> 11) / 9007199254740992.0;
+    } // [0, 1)
 
 private:
     std::uint64_t s_;
@@ -43,7 +49,8 @@ std::uint16_t reference_crc16(const std::uint8_t* data, std::size_t len) {
 }
 
 void put_u32(std::vector<std::uint8_t>& out, std::uint32_t v) {
-    for (int i = 0; i < 4; ++i) out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+    for (int i = 0; i < 4; ++i)
+        out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
 }
 
 void put_f32(std::vector<std::uint8_t>& out, float f) {
@@ -53,8 +60,8 @@ void put_f32(std::vector<std::uint8_t>& out, float f) {
 }
 
 std::uint32_t get_u32(const std::uint8_t* p) {
-    return static_cast<std::uint32_t>(p[0]) | static_cast<std::uint32_t>(p[1]) << 8 |
-           static_cast<std::uint32_t>(p[2]) << 16 | static_cast<std::uint32_t>(p[3]) << 24;
+    return static_cast<std::uint32_t>(p[0]) | static_cast<std::uint32_t>(p[1]) << 8
+        | static_cast<std::uint32_t>(p[2]) << 16 | static_cast<std::uint32_t>(p[3]) << 24;
 }
 
 float get_f32(const std::uint8_t* p) {
@@ -65,7 +72,7 @@ float get_f32(const std::uint8_t* p) {
 }
 
 std::vector<std::uint8_t> make_frame(std::uint8_t cmd, const std::vector<std::uint8_t>& data) {
-    std::vector<std::uint8_t> f{kSof, static_cast<std::uint8_t>(data.size()), cmd};
+    std::vector<std::uint8_t> f { kSof, static_cast<std::uint8_t>(data.size()), cmd };
     f.insert(f.end(), data.begin(), data.end());
     const std::uint16_t crc = reference_crc16(f.data(), f.size());
     f.push_back(static_cast<std::uint8_t>(crc & 0xFF));
@@ -84,44 +91,46 @@ std::vector<std::uint8_t> state_frame(const GimbalState& st) {
 }
 
 bool same(const GimbalState& a, const GimbalState& b) {
-    return a.time_ms == b.time_ms && a.yaw == b.yaw && a.pitch == b.pitch &&
-           a.bullet_speed == b.bullet_speed && a.enemy_color == b.enemy_color;
+    return a.time_ms == b.time_ms && a.yaw == b.yaw && a.pitch == b.pitch
+        && a.bullet_speed == b.bullet_speed && a.enemy_color == b.enemy_color;
 }
 
-}  // namespace
+} // namespace
 
-FakeSerial::FakeSerial(std::uint64_t seed) : rng_(seed ^ 0x5eedULL) {
+FakeSerial::FakeSerial(std::uint64_t seed): rng_(seed ^ 0x5eedULL) {
     Rng rng(seed);
-    auto garbage = [&](int n) {   // 乱码中故意多放一些 0xA5，制造假帧头
+    auto garbage = [&](int n) { // 乱码中故意多放一些 0xA5，制造假帧头
         for (int i = 0; i < n; ++i) {
             stream_.push_back(rng.real() < 0.125 ? kSof : static_cast<std::uint8_t>(rng.next()));
         }
     };
-    garbage(200);   // 上电乱码
+    garbage(200); // 上电乱码
     const auto color = static_cast<std::uint8_t>(rng.uniform(0, 1));
     for (int i = 0; i < kStateFrames; ++i) {
         const double t = i * 0.002;
-        const GimbalState st{
+        const GimbalState st {
             static_cast<std::uint32_t>(10000 + 2 * i),
             static_cast<float>(30.0 * std::sin(0.8 * t) + 0.01 * rng.real()),
             static_cast<float>(5.0 * std::sin(1.3 * t) + 0.01 * rng.real()),
             static_cast<float>(15.5 + 0.5 * rng.real()),
             color,
         };
-        if (rng.real() < 0.05) {   // 其他命令字的帧（例如转发的裁判系统数据），CRC 正确
+        if (rng.real() < 0.05) { // 其他命令字的帧（例如转发的裁判系统数据），CRC 正确
             std::vector<std::uint8_t> data(static_cast<std::size_t>(rng.uniform(0, 30)));
-            for (auto& b : data) b = static_cast<std::uint8_t>(rng.next());
+            for (auto& b: data)
+                b = static_cast<std::uint8_t>(rng.next());
             const auto other = make_frame(static_cast<std::uint8_t>(rng.uniform(3, 9)), data);
             stream_.insert(stream_.end(), other.begin(), other.end());
         }
-        if (rng.real() < 0.04) garbage(rng.uniform(1, 20));   // 电磁干扰产生的乱码
+        if (rng.real() < 0.04)
+            garbage(rng.uniform(1, 20)); // 电磁干扰产生的乱码
 
         std::vector<std::uint8_t> f = state_frame(st);
         const double r = rng.real();
-        if (r < 0.03) {   // 某个比特翻转
+        if (r < 0.03) { // 某个比特翻转
             f[static_cast<std::size_t>(rng.uniform(0, static_cast<int>(f.size()) - 1))] ^=
                 static_cast<std::uint8_t>(1u << rng.uniform(0, 7));
-        } else if (r < 0.06) {   // 丢失 1~5 个字节
+        } else if (r < 0.06) { // 丢失 1~5 个字节
             const int k = rng.uniform(1, 5);
             const int at = rng.uniform(0, static_cast<int>(f.size()) - k);
             f.erase(f.begin() + at, f.begin() + at + k);
@@ -136,10 +145,12 @@ FakeSerial::FakeSerial(std::uint64_t seed) : rng_(seed ^ 0x5eedULL) {
 }
 
 std::size_t FakeSerial::read(std::uint8_t* buf, std::size_t max_len) {
-    if (pos_ >= stream_.size() || max_len == 0) return 0;
+    if (pos_ >= stream_.size() || max_len == 0)
+        return 0;
     const std::uint64_t r = splitmix64(rng_);
-    std::size_t n = (r % 10 == 0) ? max_len : 1 + (r >> 8) % 32;   // 多数时候读到 1~32 字节，偶尔一次读满
-    n = std::min({n, max_len, stream_.size() - pos_});
+    std::size_t n =
+        (r % 10 == 0) ? max_len : 1 + (r >> 8) % 32; // 多数时候读到 1~32 字节，偶尔一次读满
+    n = std::min({ n, max_len, stream_.size() - pos_ });
     std::memcpy(buf, stream_.data() + pos_, n);
     pos_ += n;
     return n;
@@ -149,7 +160,7 @@ void FakeSerial::check_state(const GimbalState& st) {
     last_ = st;
     const auto it = index_.find(st.time_ms);
     if (it == index_.end() || decoded_[it->second] || !same(intact_[it->second], st)) {
-        ++wrong_;   // 不是完好的帧、重复解出，或者数据被解错
+        ++wrong_; // 不是完好的帧、重复解出，或者数据被解错
         return;
     }
     decoded_[it->second] = true;
@@ -158,15 +169,21 @@ void FakeSerial::check_state(const GimbalState& st) {
 
 void FakeSerial::write(const std::uint8_t* data, std::size_t len) {
     ++cmd_received_;
-    const bool ok = len == 18 && data[0] == kSof && data[1] == 13 && data[2] == 0x01 &&
-                    reference_crc16(data, 16) == (data[16] | data[17] << 8) &&
-                    get_u32(data + 3) == last_.time_ms && get_f32(data + 7) == last_.yaw &&
-                    get_f32(data + 11) == last_.pitch && data[15] == 1;
-    if (!ok) ++cmd_bad_;
+    const bool ok = len == 18 && data[0] == kSof && data[1] == 13 && data[2] == 0x01
+        && reference_crc16(data, 16) == (data[16] | data[17] << 8)
+        && get_u32(data + 3) == last_.time_ms && get_f32(data + 7) == last_.yaw
+        && get_f32(data + 11) == last_.pitch && data[15] == 1;
+    if (!ok)
+        ++cmd_bad_;
 }
 
 void FakeSerial::report() const {
-    std::printf("state frames: sent %d  intact %zu  decoded %d  wrong %d\n", sent_, intact_.size(),
-                decoded_count_, wrong_);
+    std::printf(
+        "state frames: sent %d  intact %zu  decoded %d  wrong %d\n",
+        sent_,
+        intact_.size(),
+        decoded_count_,
+        wrong_
+    );
     std::printf("cmd frames:   received %d  bad %d\n", cmd_received_, cmd_bad_);
 }

@@ -13,9 +13,10 @@ int main() {
         decoder.feed(buf, n);
         GimbalState st;
         while (decoder.next(st)) {
-            serial.check_state(st);   // 核对解出的数据
-            const std::vector<std::uint8_t> frame = encode(GimbalCmd{st.time_ms, st.yaw, st.pitch, 1});
-            serial.write(frame.data(), frame.size());   // 回复一帧云台指令
+            serial.check_state(st); // 核对解出的数据
+            const std::vector<std::uint8_t> frame =
+                encode(GimbalCmd { st.time_ms, st.yaw, st.pitch, 1 });
+            serial.write(frame.data(), frame.size()); // 回复一帧云台指令
         }
     }
     serial.report();

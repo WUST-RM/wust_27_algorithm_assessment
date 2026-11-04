@@ -9,24 +9,28 @@
 namespace {
 
 struct Passenger {
-    int arrive, from, to;   // 到达时刻、出发楼层、目的楼层
-    int patience;           // 最多愿意等多久（s），超过就改走楼梯
-    int board = -1;         // 上梯时刻
-    int leave = -1;         // 下梯时刻
+    int arrive, from, to; // 到达时刻、出发楼层、目的楼层
+    int patience; // 最多愿意等多久（s），超过就改走楼梯
+    int board = -1; // 上梯时刻
+    int leave = -1; // 下梯时刻
 };
 
 // 固定种子的伪随机数（splitmix64），保证所有人生成的乘客序列相同
 class Rng {
 public:
-    explicit Rng(std::uint64_t seed) : s_(seed) {}
+    explicit Rng(std::uint64_t seed): s_(seed) {}
     std::uint64_t next() {
         std::uint64_t z = (s_ += 0x9e3779b97f4a7c15ULL);
         z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
         z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
         return z ^ (z >> 31);
     }
-    int uniform(int lo, int hi) { return lo + static_cast<int>(next() % (hi - lo + 1)); }
-    double real() { return (next() >> 11) * 0x1.0p-53; }
+    int uniform(int lo, int hi) {
+        return lo + static_cast<int>(next() % (hi - lo + 1));
+    }
+    double real() {
+        return (next() >> 11) * 0x1.0p-53;
+    }
 
 private:
     std::uint64_t s_;
@@ -36,48 +40,55 @@ private:
 // 去高层的人更倾向于坐电梯；乘客等待超过 patience 就改走楼梯，要走的楼层越多越有耐心
 std::vector<Passenger> make_traffic(std::uint64_t seed) {
     Rng rng(seed);
-    auto upper_floor = [&] {    // 2 ~ 6 层，权重依次为 1 ~ 5
+    auto upper_floor = [&] { // 2 ~ 6 层，权重依次为 1 ~ 5
         int r = rng.uniform(1, 15);
         int f = 2;
-        while (r > f - 1) r -= f - 1, ++f;
+        while (r > f - 1)
+            r -= f - 1, ++f;
         return f;
     };
     std::vector<Passenger> ps;
     auto add = [&](int t, int from, int to) {
         const int floors = from > to ? from - to : to - from;
-        ps.push_back({t, from, to, 30 + 30 * floors});
+        ps.push_back({ t, from, to, 30 + 30 * floors });
     };
     for (int t = kDayStart; t < kDayEnd; ++t) {
-        double up = 1.0 / 120, down = 1.0 / 120, inter = 1.0 / 240;   // 每秒到达一名乘客的概率
-        for (const ClassPeriod& c : kClasses) {
-            if (t >= c.begin - 900 && t < c.begin) up += 0.40 * c.scale, inter += 0.02 * c.scale;
-            if (t >= c.end && t < c.end + 600) down += 0.45 * c.scale, inter += 0.02 * c.scale;
+        double up = 1.0 / 120, down = 1.0 / 120, inter = 1.0 / 240; // 每秒到达一名乘客的概率
+        for (const ClassPeriod& c: kClasses) {
+            if (t >= c.begin - 900 && t < c.begin)
+                up += 0.40 * c.scale, inter += 0.02 * c.scale;
+            if (t >= c.end && t < c.end + 600)
+                down += 0.45 * c.scale, inter += 0.02 * c.scale;
         }
-        if (rng.real() < up) add(t, 1, upper_floor());
-        if (rng.real() < down) add(t, upper_floor(), 1);
+        if (rng.real() < up)
+            add(t, 1, upper_floor());
+        if (rng.real() < down)
+            add(t, upper_floor(), 1);
         if (rng.real() < inter) {
             const int from = rng.uniform(1, kFloors);
             int to;
-            do to = rng.uniform(1, kFloors); while (to == from);
+            do
+                to = rng.uniform(1, kFloors);
+            while (to == from);
             add(t, from, to);
         }
     }
     return ps;
 }
 
-}  // namespace
+} // namespace
 
 void simulate(const std::function<Action(const View&, int)>& decide, std::uint64_t seed) {
     std::vector<Passenger> ps = make_traffic(seed);
     const int n = static_cast<int>(ps.size());
     std::array<std::deque<int>, kFloors + 1> wait_up, wait_down;
     std::array<std::vector<int>, kElevators> inside;
-    std::array<int, kElevators> busy_until{};
-    View v{};
+    std::array<int, kElevators> busy_until {};
+    View v {};
     v.hall_up.fill(-1);
     v.hall_down.fill(-1);
     for (int e = 0; e < kElevators; ++e) {
-        v.cars[e] = {1, 0, kCapacity[e], false, Action::Idle, {}};
+        v.cars[e] = { 1, 0, kCapacity[e], false, Action::Idle, {} };
         v.cars[e].car_call.fill(-1);
     }
     int next = 0, delivered = 0, gave_up = 0;
@@ -87,15 +98,16 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
             std::printf("FAIL: 23:00 时仍有乘客被困在轿厢内\n");
             return;
         }
-        for (; next < n && ps[next].arrive <= v.now; ++next) {   // 新到达的乘客按下召唤按钮
+        for (; next < n && ps[next].arrive <= v.now; ++next) { // 新到达的乘客按下召唤按钮
             const Passenger& p = ps[next];
             const bool up = p.to > p.from;
             (up ? wait_up : wait_down)[p.from].push_back(next);
             int& button = up ? v.hall_up[p.from] : v.hall_down[p.from];
-            if (button == -1) button = v.now;
+            if (button == -1)
+                button = v.now;
         }
-        for (int f = 1; f <= kFloors; ++f) {   // 等太久的乘客改走楼梯，已按下的按钮不会熄灭
-            for (auto* q : {&wait_up[f], &wait_down[f]}) {
+        for (int f = 1; f <= kFloors; ++f) { // 等太久的乘客改走楼梯，已按下的按钮不会熄灭
+            for (auto* q: { &wait_up[f], &wait_down[f] }) {
                 auto it = std::remove_if(q->begin(), q->end(), [&](int id) {
                     return v.now - ps[id].arrive > ps[id].patience;
                 });
@@ -103,9 +115,11 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
                 q->erase(it, q->end());
             }
         }
-        for (int e = 0; e < kElevators; ++e) v.cars[e].busy = busy_until[e] > v.now;
-        for (int e = 0; e < kElevators; ++e) {   // 空闲的电梯依次决策
-            if (busy_until[e] > v.now) continue;
+        for (int e = 0; e < kElevators; ++e)
+            v.cars[e].busy = busy_until[e] > v.now;
+        for (int e = 0; e < kElevators; ++e) { // 空闲的电梯依次决策
+            if (busy_until[e] > v.now)
+                continue;
             Car& c = v.cars[e];
             const Action a = decide(v, e);
             if ((a == Action::Up && c.floor == kFloors) || (a == Action::Down && c.floor == 1)) {
@@ -121,9 +135,10 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
                 const int f = c.floor;
                 int out = 0;
                 auto it = std::remove_if(inside[e].begin(), inside[e].end(), [&](int id) {
-                    if (ps[id].to != f) return false;
+                    if (ps[id].to != f)
+                        return false;
                     ++out;
-                    ps[id].leave = v.now + kDoorTime + kTransferTime * out;   // 开门后第 out 位下梯
+                    ps[id].leave = v.now + kDoorTime + kTransferTime * out; // 开门后第 out 位下梯
                     return true;
                 });
                 inside[e].erase(it, inside[e].end());
@@ -137,11 +152,14 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
                     const int id = q.front();
                     q.pop_front();
                     ++in;
-                    ps[id].board = v.now + kDoorTime + kTransferTime * (out + in);   // 下客完后第 in 位上梯
+                    ps[id].board =
+                        v.now + kDoorTime + kTransferTime * (out + in); // 下客完后第 in 位上梯
                     inside[e].push_back(id);
-                    if (c.car_call[ps[id].to] == -1) c.car_call[ps[id].to] = v.now;
+                    if (c.car_call[ps[id].to] == -1)
+                        c.car_call[ps[id].to] = v.now;
                 }
-                if (!q.empty()) button = v.now;   // 满载没上去的乘客重新按下按钮
+                if (!q.empty())
+                    button = v.now; // 满载没上去的乘客重新按下按钮
                 busy_until[e] = v.now + kDoorTime + kTransferTime * (out + in);
             } else {
                 busy_until[e] = v.now + 1;
@@ -152,15 +170,23 @@ void simulate(const std::function<Action(const View&, int)>& decide, std::uint64
 
     std::vector<int> trips;
     double trip_sum = 0, wait_sum = 0;
-    for (const Passenger& p : ps) {
-        if (p.leave == -1) continue;
+    for (const Passenger& p: ps) {
+        if (p.leave == -1)
+            continue;
         trips.push_back(p.leave - p.arrive);
         trip_sum += p.leave - p.arrive;
         wait_sum += p.board - p.arrive;
     }
     std::sort(trips.begin(), trips.end());
     const int d = static_cast<int>(trips.size());
-    std::printf("served %d/%d (%.1f%%)  gave_up %d  trip avg %5.1f s  p95 %3d s  wait avg %5.1f s\n",
-                d, n, 100.0 * d / n, gave_up, d ? trip_sum / d : 0.0, d ? trips[d * 95 / 100] : 0,
-                d ? wait_sum / d : 0.0);
+    std::printf(
+        "served %d/%d (%.1f%%)  gave_up %d  trip avg %5.1f s  p95 %3d s  wait avg %5.1f s\n",
+        d,
+        n,
+        100.0 * d / n,
+        gave_up,
+        d ? trip_sum / d : 0.0,
+        d ? trips[d * 95 / 100] : 0,
+        d ? wait_sum / d : 0.0
+    );
 }

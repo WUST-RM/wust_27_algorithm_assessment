@@ -14,12 +14,12 @@
 void run_serial() {
     Tracker tracker;
     Latest<Target> latest;
-    std::atomic<bool> stop{false};
+    std::atomic<bool> stop { false };
     std::thread solver(solver_loop, std::cref(latest), std::cref(stop));
 
     std::mutex mtx;
     std::condition_variable cv;
-    std::optional<Frame> slot;   // 容量为 1 的帧槽
+    std::optional<Frame> slot; // 容量为 1 的帧槽
     bool camera_done = false;
 
     const auto t0 = Clock::now();
@@ -27,7 +27,7 @@ void run_serial() {
         for (int i = 0; i < kFrames; ++i) {
             std::this_thread::sleep_until(t0 + i * kPeriod);
             std::lock_guard lk(mtx);
-            slot = Frame{i, Clock::now()};   // 旧帧还没被取走时直接覆盖
+            slot = Frame { i, Clock::now() }; // 旧帧还没被取走时直接覆盖
             cv.notify_one();
         }
         std::lock_guard lk(mtx);
@@ -41,7 +41,8 @@ void run_serial() {
             {
                 std::unique_lock lk(mtx);
                 cv.wait(lk, [&] { return slot || camera_done; });
-                if (!slot) break;
+                if (!slot)
+                    break;
                 f = *slot;
                 slot.reset();
             }
@@ -54,5 +55,10 @@ void run_serial() {
     worker.join();
     stop = true;
     solver.join();
-    std::printf("order_errors %d  detected %d/%d\n", tracker.order_errors(), tracker.detected_count(), kFrames);
+    std::printf(
+        "order_errors %d  detected %d/%d\n",
+        tracker.order_errors(),
+        tracker.detected_count(),
+        kFrames
+    );
 }

@@ -28,13 +28,13 @@ public:
     void report() const;
 
 private:
-    std::vector<std::uint8_t> stream_;                 // 下位机发出的全部字节（含干扰）
-    std::size_t pos_ = 0;                              // 已被读走的字节数
-    std::uint64_t rng_;                                // 决定每次 read 的长度
-    std::vector<GimbalState> intact_;                  // 完好的 GimbalState 帧
-    std::unordered_map<std::uint32_t, std::size_t> index_;  // time_ms -> intact_ 下标
-    std::vector<bool> decoded_;                        // intact_ 中每一帧是否已被正确解出
-    GimbalState last_{};                               // 最近一次 check_state 的状态
+    std::vector<std::uint8_t> stream_; // 下位机发出的全部字节（含干扰）
+    std::size_t pos_ = 0; // 已被读走的字节数
+    std::uint64_t rng_; // 决定每次 read 的长度
+    std::vector<GimbalState> intact_; // 完好的 GimbalState 帧
+    std::unordered_map<std::uint32_t, std::size_t> index_; // time_ms -> intact_ 下标
+    std::vector<bool> decoded_; // intact_ 中每一帧是否已被正确解出
+    GimbalState last_ {}; // 最近一次 check_state 的状态
     int sent_ = 0, decoded_count_ = 0, wrong_ = 0;
     int cmd_received_ = 0, cmd_bad_ = 0;
 };
